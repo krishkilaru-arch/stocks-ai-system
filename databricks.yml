@@ -1,0 +1,25 @@
+# Databricks configuration
+# Update with your workspace details
+
+workspace:
+  host: https://your-workspace.cloud.databricks.com
+  profile: DEFAULT
+
+catalog:
+  name: stocks_ai
+  comment: "Multi-supervisor AI system for stock prediction"
+
+schema:
+  name: fortune100
+  comment: "Fortune 100 companies data and predictions"
+
+# MLflow experiment
+mlflow:
+  experiment_name: "/Shared/stocks_ai/experiments"
+  tracking_uri: "databricks"
+
+# Unity Catalog paths
+paths:
+  raw_data: "s3://your-bucket/stocks/raw"
+  processed_data: "s3://your-bucket/stocks/processed"
+  predictions: "s3://your-bucket/stocks/predictions"
