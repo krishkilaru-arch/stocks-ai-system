@@ -24,6 +24,36 @@ class Config(BaseSettings):
     # LLM Configuration
     openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Load secrets from Databricks if available
+        if self.use_databricks_secrets:
+            try:
+                import dbutils
+                if not self.openai_api_key:
+                    try:
+                        self.openai_api_key = dbutils.secrets.get(scope=self.secrets_scope, key="openai_api_key")
+                    except:
+                        pass
+                if not self.anthropic_api_key:
+                    try:
+                        self.anthropic_api_key = dbutils.secrets.get(scope=self.secrets_scope, key="anthropic_api_key")
+                    except:
+                        pass
+                if not self.alpha_vantage_api_key:
+                    try:
+                        self.alpha_vantage_api_key = dbutils.secrets.get(scope=self.secrets_scope, key="alpha_vantage_api_key")
+                    except:
+                        pass
+                if not self.fred_api_key:
+                    try:
+                        self.fred_api_key = dbutils.secrets.get(scope=self.secrets_scope, key="fred_api_key")
+                    except:
+                        pass
+            except:
+                # dbutils not available (not in Databricks environment)
+                pass
     llm_provider: str = Field("openai", env="LLM_PROVIDER")  # openai or anthropic
     llm_model: str = Field("gpt-4-turbo-preview", env="LLM_MODEL")
     
@@ -31,9 +61,13 @@ class Config(BaseSettings):
         """Get secret from Databricks Secrets if available, else from env."""
         if self.use_databricks_secrets:
             try:
-                from pyspark.sql import SparkSession
-                spark = SparkSession.builder.getOrCreate()
-                return spark.conf.get(f"spark.databricks.secrets.get.{self.secrets_scope}.{key}")
+                # Try to use dbutils (available in Databricks notebooks)
+                try:
+                    import dbutils
+                    return dbutils.secrets.get(scope=self.secrets_scope, key=key)
+                except:
+                    # Fallback to environment variable
+                    return os.getenv(key.upper())
             except:
                 # Fallback to environment variable
                 return os.getenv(key.upper())
