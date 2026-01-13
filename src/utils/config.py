@@ -1,10 +1,20 @@
 """Configuration management for the multi-supervisor AI system."""
 import os
 from typing import Optional
+
+# Handle Pydantic v2 BaseSettings import
 try:
-    from pydantic_settings import BaseSettings
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+    PYDANTIC_V2 = True
 except ImportError:
-    from pydantic import BaseSettings
+    try:
+        from pydantic import BaseSettings
+        PYDANTIC_V2 = False
+    except ImportError:
+        # Fallback: use regular class if pydantic not available
+        BaseSettings = object
+        PYDANTIC_V2 = False
+
 from pydantic import Field
 
 
@@ -24,6 +34,21 @@ class Config(BaseSettings):
     # LLM Configuration
     openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    llm_provider: str = Field("openai", env="LLM_PROVIDER")  # openai or anthropic
+    llm_model: str = Field("gpt-4-turbo-preview", env="LLM_MODEL")
+    
+    # Data Sources
+    yahoo_finance_enabled: bool = Field(True, env="YAHOO_FINANCE_ENABLED")
+    alpha_vantage_api_key: Optional[str] = Field(None, env="ALPHA_VANTAGE_API_KEY")
+    fred_api_key: Optional[str] = Field(None, env="FRED_API_KEY")
+    
+    # MLflow
+    mlflow_experiment_name: str = Field("/Shared/stocks_ai/experiments", env="MLFLOW_EXPERIMENT")
+    mlflow_tracking_uri: str = Field("databricks", env="MLFLOW_TRACKING_URI")
+    
+    # Prediction settings
+    default_prediction_horizon_days: int = Field(30, env="PREDICTION_HORIZON_DAYS")
+    min_confidence_threshold: float = Field(0.6, env="MIN_CONFIDENCE_THRESHOLD")
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -54,8 +79,6 @@ class Config(BaseSettings):
             except:
                 # dbutils not available (not in Databricks environment)
                 pass
-    llm_provider: str = Field("openai", env="LLM_PROVIDER")  # openai or anthropic
-    llm_model: str = Field("gpt-4-turbo-preview", env="LLM_MODEL")
     
     def get_secret(self, key: str) -> Optional[str]:
         """Get secret from Databricks Secrets if available, else from env."""
@@ -72,23 +95,22 @@ class Config(BaseSettings):
                 # Fallback to environment variable
                 return os.getenv(key.upper())
         return os.getenv(key.upper())
-    
-    # Data Sources
-    yahoo_finance_enabled: bool = Field(True, env="YAHOO_FINANCE_ENABLED")
-    alpha_vantage_api_key: Optional[str] = Field(None, env="ALPHA_VANTAGE_API_KEY")
-    fred_api_key: Optional[str] = Field(None, env="FRED_API_KEY")
-    
-    # MLflow
-    mlflow_experiment_name: str = Field("/Shared/stocks_ai/experiments", env="MLFLOW_EXPERIMENT")
-    mlflow_tracking_uri: str = Field("databricks", env="MLFLOW_TRACKING_URI")
-    
-    # Prediction settings
-    default_prediction_horizon_days: int = Field(30, env="PREDICTION_HORIZON_DAYS")
-    min_confidence_threshold: float = Field(0.6, env="MIN_CONFIDENCE_THRESHOLD")
-    
-    class Config:
+
+
+# Set up model config based on Pydantic version
+if PYDANTIC_V2:
+    # Pydantic v2: use model_config attribute
+    Config.model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+else:
+    # Pydantic v1: use nested Config class
+    class ConfigClass:
         env_file = ".env"
         env_file_encoding = "utf-8"
+    Config.Config = ConfigClass
 
 
 # Global config instance
