@@ -1,7 +1,5 @@
 """LLM client for agent reasoning."""
 from typing import List, Dict, Optional
-from openai import OpenAI
-from anthropic import Anthropic
 from src.utils.config import config
 
 
@@ -13,10 +11,18 @@ class LLMClient:
         self.model = config.llm_model
         
         if self.provider == "openai":
+            try:
+                from openai import OpenAI
+            except ImportError:
+                raise ImportError("openai package not installed. Install with: pip install openai")
             if not config.openai_api_key:
                 raise ValueError("OPENAI_API_KEY not set")
             self.client = OpenAI(api_key=config.openai_api_key)
         elif self.provider == "anthropic":
+            try:
+                from anthropic import Anthropic
+            except ImportError:
+                raise ImportError("anthropic package not installed. Install with: pip install anthropic")
             if not config.anthropic_api_key:
                 raise ValueError("ANTHROPIC_API_KEY not set")
             self.client = Anthropic(api_key=config.anthropic_api_key)
