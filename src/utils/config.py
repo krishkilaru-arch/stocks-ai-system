@@ -22,33 +22,33 @@ class Config(BaseSettings):
     """Application configuration."""
     
     # Databricks
-    databricks_host: Optional[str] = Field(default=None, json_schema_extra={"env": "DATABRICKS_HOST"})
-    databricks_token: Optional[str] = Field(default=None, json_schema_extra={"env": "DATABRICKS_TOKEN"})
-    catalog_name: str = Field(default="stocks_ai", json_schema_extra={"env": "CATALOG_NAME"})
-    schema_name: str = Field(default="fortune100", json_schema_extra={"env": "SCHEMA_NAME"})
+    databricks_host: Optional[str] = None
+    databricks_token: Optional[str] = None
+    catalog_name: str = "stocks_ai"
+    schema_name: str = "fortune100"
     
     # Databricks Secrets (alternative to env vars)
-    use_databricks_secrets: bool = Field(default=True, json_schema_extra={"env": "USE_DATABRICKS_SECRETS"})
-    secrets_scope: str = Field(default="stocks_ai_secrets", json_schema_extra={"env": "SECRETS_SCOPE"})
+    use_databricks_secrets: bool = True
+    secrets_scope: str = "stocks_ai_secrets"
     
     # LLM Configuration
-    openai_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "OPENAI_API_KEY"})
-    anthropic_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "ANTHROPIC_API_KEY"})
-    llm_provider: str = Field(default="databricks", json_schema_extra={"env": "LLM_PROVIDER"})  # databricks, openai, or anthropic
-    llm_model: str = Field(default="databricks-meta-llama-3-1-70b-instruct", json_schema_extra={"env": "LLM_MODEL"})
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    llm_provider: str = "databricks"  # databricks, openai, or anthropic
+    llm_model: str = "databricks-meta-llama-3-1-70b-instruct"
     
     # Data Sources
-    yahoo_finance_enabled: bool = Field(default=True, json_schema_extra={"env": "YAHOO_FINANCE_ENABLED"})
-    alpha_vantage_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "ALPHA_VANTAGE_API_KEY"})
-    fred_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "FRED_API_KEY"})
+    yahoo_finance_enabled: bool = True
+    alpha_vantage_api_key: Optional[str] = None
+    fred_api_key: Optional[str] = None
     
     # MLflow
-    mlflow_experiment_name: str = Field(default="/Shared/stocks_ai/experiments", json_schema_extra={"env": "MLFLOW_EXPERIMENT"})
-    mlflow_tracking_uri: str = Field(default="databricks", json_schema_extra={"env": "MLFLOW_TRACKING_URI"})
+    mlflow_experiment_name: str = "/Shared/stocks_ai/experiments"
+    mlflow_tracking_uri: str = "databricks"
     
     # Prediction settings
-    default_prediction_horizon_days: int = Field(default=30, json_schema_extra={"env": "PREDICTION_HORIZON_DAYS"})
-    min_confidence_threshold: float = Field(default=0.6, json_schema_extra={"env": "MIN_CONFIDENCE_THRESHOLD"})
+    default_prediction_horizon_days: int = 30
+    min_confidence_threshold: float = 0.6
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
