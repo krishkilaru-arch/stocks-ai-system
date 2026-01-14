@@ -22,33 +22,33 @@ class Config(BaseSettings):
     """Application configuration."""
     
     # Databricks
-    databricks_host: Optional[str] = Field(None, env="DATABRICKS_HOST")
-    databricks_token: Optional[str] = Field(None, env="DATABRICKS_TOKEN")
-    catalog_name: str = Field("stocks_ai", env="CATALOG_NAME")
-    schema_name: str = Field("fortune100", env="SCHEMA_NAME")
+    databricks_host: Optional[str] = Field(default=None, json_schema_extra={"env": "DATABRICKS_HOST"})
+    databricks_token: Optional[str] = Field(default=None, json_schema_extra={"env": "DATABRICKS_TOKEN"})
+    catalog_name: str = Field(default="stocks_ai", json_schema_extra={"env": "CATALOG_NAME"})
+    schema_name: str = Field(default="fortune100", json_schema_extra={"env": "SCHEMA_NAME"})
     
     # Databricks Secrets (alternative to env vars)
-    use_databricks_secrets: bool = Field(True, env="USE_DATABRICKS_SECRETS")
-    secrets_scope: str = Field("stocks_ai_secrets", env="SECRETS_SCOPE")
+    use_databricks_secrets: bool = Field(default=True, json_schema_extra={"env": "USE_DATABRICKS_SECRETS"})
+    secrets_scope: str = Field(default="stocks_ai_secrets", json_schema_extra={"env": "SECRETS_SCOPE"})
     
     # LLM Configuration
-    openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
-    llm_provider: str = Field("openai", env="LLM_PROVIDER")  # openai or anthropic
-    llm_model: str = Field("gpt-4-turbo-preview", env="LLM_MODEL")
+    openai_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "OPENAI_API_KEY"})
+    anthropic_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "ANTHROPIC_API_KEY"})
+    llm_provider: str = Field(default="databricks", json_schema_extra={"env": "LLM_PROVIDER"})  # databricks, openai, or anthropic
+    llm_model: str = Field(default="databricks-meta-llama-3-1-70b-instruct", json_schema_extra={"env": "LLM_MODEL"})
     
     # Data Sources
-    yahoo_finance_enabled: bool = Field(True, env="YAHOO_FINANCE_ENABLED")
-    alpha_vantage_api_key: Optional[str] = Field(None, env="ALPHA_VANTAGE_API_KEY")
-    fred_api_key: Optional[str] = Field(None, env="FRED_API_KEY")
+    yahoo_finance_enabled: bool = Field(default=True, json_schema_extra={"env": "YAHOO_FINANCE_ENABLED"})
+    alpha_vantage_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "ALPHA_VANTAGE_API_KEY"})
+    fred_api_key: Optional[str] = Field(default=None, json_schema_extra={"env": "FRED_API_KEY"})
     
     # MLflow
-    mlflow_experiment_name: str = Field("/Shared/stocks_ai/experiments", env="MLFLOW_EXPERIMENT")
-    mlflow_tracking_uri: str = Field("databricks", env="MLFLOW_TRACKING_URI")
+    mlflow_experiment_name: str = Field(default="/Shared/stocks_ai/experiments", json_schema_extra={"env": "MLFLOW_EXPERIMENT"})
+    mlflow_tracking_uri: str = Field(default="databricks", json_schema_extra={"env": "MLFLOW_TRACKING_URI"})
     
     # Prediction settings
-    default_prediction_horizon_days: int = Field(30, env="PREDICTION_HORIZON_DAYS")
-    min_confidence_threshold: float = Field(0.6, env="MIN_CONFIDENCE_THRESHOLD")
+    default_prediction_horizon_days: int = Field(default=30, json_schema_extra={"env": "PREDICTION_HORIZON_DAYS"})
+    min_confidence_threshold: float = Field(default=0.6, json_schema_extra={"env": "MIN_CONFIDENCE_THRESHOLD"})
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -103,7 +103,8 @@ if PYDANTIC_V2:
     Config.model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
+        env_prefix=""
     )
 else:
     # Pydantic v1: use nested Config class

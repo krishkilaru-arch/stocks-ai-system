@@ -4,13 +4,47 @@ from src.utils.config import config
 
 
 class LLMClient:
-    """Unified LLM client supporting OpenAI and Anthropic."""
+    """Unified LLM client supporting Databricks Foundation Models, OpenAI, and Anthropic."""
     
     def __init__(self):
         self.provider = config.llm_provider
         self.model = config.llm_model
         
-        if self.provider == "openai":
+        if self.provider == "databricks":
+            # Databricks Foundation Model API uses OpenAI-compatible interface
+            try:
+                from openai import OpenAI
+            except ImportError:
+                raise ImportError("openai package not installed. Install with: pip install openai")
+            
+            # Use Databricks workspace for Foundation Models
+            workspace_host = config.databricks_host or "https://dbc-47a3dcaa-ae3e.cloud.databricks.com"
+            workspace_token = config.databricks_token
+            
+            # Try to get token from environment or dbutils
+            if not workspace_token:
+                try:
+                    import os
+                    workspace_token = os.getenv("DATABRICKS_TOKEN")
+                except:
+                    pass
+            
+            if not workspace_token:
+                try:
+                    # In Databricks notebooks, use context token
+                    from databricks.sdk.runtime import dbutils
+                    workspace_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+                except:
+                    pass
+            
+            if not workspace_token:
+                raise ValueError("DATABRICKS_TOKEN not set and could not retrieve from context")
+            
+            self.client = OpenAI(
+                api_key=workspace_token,
+                base_url=f"{workspace_host}/serving-endpoints"
+            )
+        elif self.provider == "openai":
             try:
                 from openai import OpenAI
             except ImportError:
@@ -37,7 +71,8 @@ class LLMClient:
         max_tokens: int = 2000
     ) -> str:
         """Generate reasoning using the configured LLM."""
-        if self.provider == "openai":
+        if self.provider in ["databricks", "openai"]:
+            # Both Databricks and OpenAI use the same interface
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
