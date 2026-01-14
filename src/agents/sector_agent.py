@@ -1,8 +1,9 @@
 """Sector Agent - Analyzes industry trends and peer comparisons."""
-from typing import Dict, Any
-from datetime import date
+from typing import Dict, Any, List
+from datetime import date, timedelta
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
+import yfinance as yf
 
 
 class SectorAgent(BaseAgent):
@@ -13,7 +14,7 @@ class SectorAgent(BaseAgent):
             name="Sector Agent",
             description="Analyzes industry trends, sector performance, and peer company comparisons"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are a sector analyst specializing in industry trends and peer comparisons.
@@ -40,49 +41,77 @@ Provide reasoning that connects sector dynamics to individual stock performance.
     
     def collect_signals(self, symbol: str, as_of_date: date) -> Dict[str, Any]:
         """Collect sector-related signals."""
-        signals = {}
+        signals = {
+            "symbol": symbol,
+            "date": as_of_date.isoformat()
+        }
         
         # Get company sector info
-        company_info = self.data_loader.get_company_info(symbol)
-        if company_info:
-            signals["sector"] = company_info.sector
-            signals["industry"] = company_info.industry
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
+            signals["industry"] = company.industry
+            signals["market_cap"] = company.market_cap
         
-        # Get sector performance
-        if signals.get("sector"):
-            sector_performance = self.data_loader.get_sector_performance(signals["sector"], as_of_date)
-            if sector_performance:
-                signals["sector_performance"] = {
-                    "ytd_return": sector_performance.get("ytd_return"),
-                    "recent_trend": sector_performance.get("trend"),
-                    "relative_strength": sector_performance.get("relative_strength")
-                }
+        # Get sector ETF performance as proxy
+        sector_etf_map = {
+            "Technology": "XLK",
+            "Healthcare": "XLV",
+            "Financials": "XLF",
+            "Consumer Discretionary": "XLY",
+            "Consumer Staples": "XLP",
+            "Energy": "XLE",
+            "Industrials": "XLI",
+            "Materials": "XLB",
+            "Real Estate": "XLRE",
+            "Utilities": "XLU",
+            "Communication Services": "XLC"
+        }
         
-        # Get peer companies
-        peers = self.data_loader.get_peer_companies(symbol)
-        if peers:
-            signals["peer_count"] = len(peers)
-            signals["peer_symbols"] = [p.symbol for p in peers]
+        sector = signals.get("sector", "")
+        if sector in sector_etf_map:
+            try:
+                etf_symbol = sector_etf_map[sector]
+                etf = yf.Ticker(etf_symbol)
+                etf_hist = etf.history(period="6mo")
+                
+                if not etf_hist.empty:
+                    # Calculate sector performance
+                    first_close = etf_hist['Close'].iloc[0]
+                    last_close = etf_hist['Close'].iloc[-1]
+                    sector_return = ((last_close / first_close) - 1) * 100
+                    
+                    signals["sector_etf"] = etf_symbol
+                    signals["sector_6m_return"] = round(sector_return, 2)
+                    
+                    # Recent momentum (1 month)
+                    if len(etf_hist) >= 20:
+                        month_ago_close = etf_hist['Close'].iloc[-20]
+                        recent_return = ((last_close / month_ago_close) - 1) * 100
+                        signals["sector_1m_return"] = round(recent_return, 2)
+            except:
+                pass
         
-        # Get peer performance comparison
-        if peers:
-            peer_performance = self.data_loader.get_peer_performance_comparison(symbol, as_of_date)
-            if peer_performance:
-                signals["peer_comparison"] = {
-                    "company_rank": peer_performance.get("rank"),
-                    "avg_peer_return": peer_performance.get("avg_return"),
-                    "company_return": peer_performance.get("company_return")
-                }
+        # Get company's own performance for comparison
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="6mo")
+            if not hist.empty:
+                first_close = hist['Close'].iloc[0]
+                last_close = hist['Close'].iloc[-1]
+                company_return = ((last_close / first_close) - 1) * 100
+                signals["company_6m_return"] = round(company_return, 2)
+                
+                if len(hist) >= 20:
+                    month_ago_close = hist['Close'].iloc[-20]
+                    recent_return = ((last_close / month_ago_close) - 1) * 100
+                    signals["company_1m_return"] = round(recent_return, 2)
+        except:
+            pass
         
-        # Get industry trends
-        if signals.get("industry"):
-            industry_trends = self.data_loader.get_industry_trends(signals["industry"], as_of_date)
-            if industry_trends:
-                signals["industry_trends"] = {
-                    "growth_rate": industry_trends.get("growth_rate"),
-                    "trend_direction": industry_trends.get("direction"),
-                    "key_drivers": industry_trends.get("drivers", [])
-                }
+        # Simplified peer analysis using sector
+        signals["peer_analysis_note"] = "Using sector ETF as benchmark - add specific peer symbols for detailed comparison"
         
         return signals
     
@@ -90,60 +119,69 @@ Provide reasoning that connects sector dynamics to individual stock performance.
         """Analyze sector signals."""
         analysis = {}
         
-        # Sector performance assessment
-        if "sector_performance" in signals:
-            sector_perf = signals["sector_performance"]
-            ytd_return = sector_perf.get("ytd_return", 0)
+        # Sector performance assessment (6-month)
+        if signals.get("sector_6m_return") is not None:
+            sector_return = signals["sector_6m_return"]
             
-            if ytd_return > 15:
-                analysis["sector_performance"] = "strong"
-            elif ytd_return > 5:
-                analysis["sector_performance"] = "good"
-            elif ytd_return < -10:
-                analysis["sector_performance"] = "weak"
-            elif ytd_return < 0:
-                analysis["sector_performance"] = "negative"
+            if sector_return > 20:
+                analysis["sector_performance"] = "strong sector (6M: +20%+)"
+            elif sector_return > 10:
+                analysis["sector_performance"] = "outperforming sector (6M: +10-20%)"
+            elif sector_return > 0:
+                analysis["sector_performance"] = "positive sector (6M: 0-10%)"
+            elif sector_return > -10:
+                analysis["sector_performance"] = "weak sector (6M: 0 to -10%)"
             else:
-                analysis["sector_performance"] = "moderate"
+                analysis["sector_performance"] = "underperforming sector (6M: -10%+)"
+            
+            analysis["sector_6m_return_pct"] = f"{sector_return:+.2f}%"
         
-        # Peer comparison
-        if "peer_comparison" in signals:
-            peer_comp = signals["peer_comparison"]
-            company_return = peer_comp.get("company_return", 0)
-            avg_peer_return = peer_comp.get("avg_peer_return", 0)
-            rank = peer_comp.get("rank")
-            
-            if company_return > avg_peer_return * 1.1:
-                analysis["peer_position"] = "outperforming peers"
-            elif company_return < avg_peer_return * 0.9:
-                analysis["peer_position"] = "underperforming peers"
+        # Recent sector momentum (1-month)
+        if signals.get("sector_1m_return") is not None:
+            recent = signals["sector_1m_return"]
+            if recent > 5:
+                analysis["sector_momentum"] = "strong recent momentum (+5%+ in 1M)"
+            elif recent > 2:
+                analysis["sector_momentum"] = "positive momentum (+2-5% in 1M)"
+            elif recent > -2:
+                analysis["sector_momentum"] = "neutral momentum (±2% in 1M)"
+            elif recent > -5:
+                analysis["sector_momentum"] = "negative momentum (-2 to -5% in 1M)"
             else:
-                analysis["peer_position"] = "in line with peers"
-            
-            if rank:
-                total_peers = signals.get("peer_count", 1)
-                percentile = (1 - rank / total_peers) * 100
-                if percentile > 75:
-                    analysis["peer_ranking"] = "top quartile"
-                elif percentile > 50:
-                    analysis["peer_ranking"] = "above median"
-                elif percentile > 25:
-                    analysis["peer_ranking"] = "below median"
-                else:
-                    analysis["peer_ranking"] = "bottom quartile"
+                analysis["sector_momentum"] = "weak momentum (-5%+ in 1M)"
         
-        # Industry trend assessment
-        if "industry_trends" in signals:
-            trends = signals["industry_trends"]
-            growth_rate = trends.get("growth_rate", 0)
+        # Company vs Sector comparison
+        if signals.get("company_6m_return") is not None and signals.get("sector_6m_return") is not None:
+            company_ret = signals["company_6m_return"]
+            sector_ret = signals["sector_6m_return"]
+            relative_perf = company_ret - sector_ret
             
-            if growth_rate > 10:
-                analysis["industry_growth"] = "strong growth"
-            elif growth_rate > 5:
-                analysis["industry_growth"] = "moderate growth"
-            elif growth_rate > 0:
-                analysis["industry_growth"] = "slow growth"
+            if relative_perf > 10:
+                analysis["relative_performance"] = f"strongly outperforming sector (+{relative_perf:.1f}% vs sector)"
+            elif relative_perf > 5:
+                analysis["relative_performance"] = f"outperforming sector (+{relative_perf:.1f}% vs sector)"
+            elif relative_perf > -5:
+                analysis["relative_performance"] = f"in line with sector ({relative_perf:+.1f}% vs sector)"
+            elif relative_perf > -10:
+                analysis["relative_performance"] = f"underperforming sector ({relative_perf:.1f}% vs sector)"
             else:
-                analysis["industry_growth"] = "declining"
+                analysis["relative_performance"] = f"significantly lagging sector ({relative_perf:.1f}% vs sector)"
+        
+        # Recent relative momentum (1-month)
+        if signals.get("company_1m_return") is not None and signals.get("sector_1m_return") is not None:
+            company_1m = signals["company_1m_return"]
+            sector_1m = signals["sector_1m_return"]
+            recent_relative = company_1m - sector_1m
+            
+            if recent_relative > 3:
+                analysis["recent_relative_strength"] = "gaining on sector peers"
+            elif recent_relative < -3:
+                analysis["recent_relative_strength"] = "losing to sector peers"
+            else:
+                analysis["recent_relative_strength"] = "tracking sector"
+        
+        # Sector positioning
+        sector_name = signals.get("sector", "Unknown")
+        analysis["sector_context"] = f"{sector_name} sector analysis"
         
         return analysis

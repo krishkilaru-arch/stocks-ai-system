@@ -2,7 +2,8 @@
 from typing import Dict, Any
 from datetime import date
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
+import yfinance as yf
 
 
 class MacroAgent(BaseAgent):
@@ -13,7 +14,7 @@ class MacroAgent(BaseAgent):
             name="Macro Agent",
             description="Analyzes macroeconomic indicators, policy changes, and their impact on stock markets"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are a macroeconomist specializing in how macroeconomic factors affect stock markets.
@@ -40,33 +41,46 @@ Provide reasoning that connects macroeconomic conditions to expected stock perfo
     
     def collect_signals(self, symbol: str, as_of_date: date) -> Dict[str, Any]:
         """Collect macroeconomic signals."""
-        signals = {}
+        signals = {
+            "symbol": symbol,
+            "date": as_of_date.isoformat()
+        }
         
-        # Get macro indicators
-        macro = self.data_loader.get_macro_indicators(as_of_date)
-        if macro:
-            signals.update({
-                "gdp_growth": macro.gdp_growth,
-                "inflation_rate": macro.inflation_rate,
-                "interest_rate": macro.interest_rate,
-                "unemployment_rate": macro.unemployment_rate,
-                "consumer_confidence": macro.consumer_confidence,
-                "vix_index": macro.vix_index
-            })
+        # Get company info for sector context
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
+            signals["industry"] = company.industry
         
-        # Get historical macro trends
-        macro_history = self.data_loader.get_macro_history(as_of_date, months=12)
-        if macro_history:
-            signals["macro_trends"] = {
-                "gdp_trend": [m.gdp_growth for m in macro_history if m.gdp_growth],
-                "inflation_trend": [m.inflation_rate for m in macro_history if m.inflation_rate],
-                "interest_rate_trend": [m.interest_rate for m in macro_history if m.interest_rate]
-            }
+        # Get market indices for macro context
+        try:
+            # S&P 500 as market proxy
+            sp500 = yf.Ticker("^GSPC")
+            sp500_info = sp500.info
+            signals["market_index"] = "S&P 500"
+            signals["market_pe"] = sp500_info.get("trailingPE")
+            
+            # VIX for volatility/fear gauge
+            vix = yf.Ticker("^VIX")
+            vix_hist = vix.history(period="5d")
+            if not vix_hist.empty:
+                signals["vix_index"] = float(vix_hist['Close'].iloc[-1])
+            
+            # Treasury yields for interest rate environment
+            tnx = yf.Ticker("^TNX")  # 10-year treasury
+            tnx_hist = tnx.history(period="5d")
+            if not tnx_hist.empty:
+                signals["treasury_10y"] = float(tnx_hist['Close'].iloc[-1])
+                
+        except Exception as e:
+            signals["macro_data_note"] = f"Limited macro data available: {str(e)[:100]}"
         
-        # Get sector sensitivity
-        sector_sensitivity = self.data_loader.get_sector_macro_sensitivity(symbol)
-        if sector_sensitivity:
-            signals["sector_sensitivity"] = sector_sensitivity
+        # Placeholder for macro indicators (would come from FRED in production)
+        signals["macro_indicators"] = {
+            "note": "Using market proxies - integrate FRED API for full macro data",
+            "available_indicators": ["VIX", "Treasury Yields", "Market P/E"]
+        }
         
         return signals
     
@@ -74,58 +88,61 @@ Provide reasoning that connects macroeconomic conditions to expected stock perfo
         """Analyze macroeconomic signals."""
         analysis = {}
         
-        # Economic cycle assessment
-        if signals.get("gdp_growth"):
-            gdp_growth = signals["gdp_growth"]
-            if gdp_growth > 3:
-                analysis["economic_phase"] = "strong expansion"
-            elif gdp_growth > 1:
-                analysis["economic_phase"] = "moderate expansion"
-            elif gdp_growth > 0:
-                analysis["economic_phase"] = "slow growth"
+        # Interest rate environment assessment (from Treasury yields)
+        if signals.get("treasury_10y"):
+            rate = signals["treasury_10y"]
+            if rate > 4.5:
+                analysis["rate_environment"] = "high rates (>4.5%), negative for growth stocks"
+            elif rate > 3.5:
+                analysis["rate_environment"] = "elevated rates (3.5-4.5%), moderate pressure"
+            elif rate > 2.0:
+                analysis["rate_environment"] = "normal rates (2-3.5%), balanced"
             else:
-                analysis["economic_phase"] = "contraction"
+                analysis["rate_environment"] = "low rates (<2%), supportive for equities"
+            analysis["treasury_10y_yield"] = f"{rate:.2f}%"
         
-        # Interest rate environment
-        if signals.get("interest_rate"):
-            rate = signals["interest_rate"]
-            if rate > 5:
-                analysis["rate_environment"] = "high"
-            elif rate > 2:
-                analysis["rate_environment"] = "moderate"
-            else:
-                analysis["rate_environment"] = "low"
-        
-        # Inflation assessment
-        if signals.get("inflation_rate"):
-            inflation = signals["inflation_rate"]
-            if inflation > 4:
-                analysis["inflation_status"] = "high"
-            elif inflation > 2:
-                analysis["inflation_status"] = "moderate"
-            else:
-                analysis["inflation_status"] = "low"
-        
-        # Market sentiment (VIX)
+        # Market sentiment assessment (VIX)
         if signals.get("vix_index"):
             vix = signals["vix_index"]
-            if vix > 25:
-                analysis["market_sentiment"] = "high fear/volatility"
+            if vix > 30:
+                analysis["market_sentiment"] = "extreme fear (VIX>30), high volatility"
+            elif vix > 20:
+                analysis["market_sentiment"] = "elevated fear (VIX 20-30), heightened volatility"
             elif vix > 15:
-                analysis["market_sentiment"] = "moderate volatility"
+                analysis["market_sentiment"] = "moderate volatility (VIX 15-20)"
             else:
-                analysis["market_sentiment"] = "low volatility/calm"
+                analysis["market_sentiment"] = "low fear (VIX<15), calm markets"
+            analysis["vix_level"] = f"{vix:.2f}"
         
-        # Trend analysis
-        if "macro_trends" in signals:
-            trends = signals["macro_trends"]
-            if "interest_rate_trend" in trends and len(trends["interest_rate_trend"]) >= 2:
-                rate_trend = trends["interest_rate_trend"]
-                if rate_trend[-1] > rate_trend[0]:
-                    analysis["rate_trend"] = "rising"
-                elif rate_trend[-1] < rate_trend[0]:
-                    analysis["rate_trend"] = "falling"
-                else:
-                    analysis["rate_trend"] = "stable"
+        # Market valuation assessment
+        if signals.get("market_pe"):
+            market_pe = signals["market_pe"]
+            if market_pe > 22:
+                analysis["market_valuation"] = "expensive market (P/E>22), potential correction risk"
+            elif market_pe > 18:
+                analysis["market_valuation"] = "fairly valued market (P/E 18-22)"
+            elif market_pe > 14:
+                analysis["market_valuation"] = "attractive market (P/E 14-18), good entry"
+            else:
+                analysis["market_valuation"] = "cheap market (P/E<14), strong value opportunity"
+        
+        # Sector-specific macro sensitivity
+        sector = signals.get("sector", "")
+        if sector:
+            # High interest rate sensitivity sectors
+            rate_sensitive = ["Real Estate", "Utilities", "Technology"]
+            # Cyclical sectors (GDP sensitive)
+            cyclical = ["Consumer Discretionary", "Industrials", "Materials", "Energy"]
+            # Defensive sectors
+            defensive = ["Consumer Staples", "Healthcare", "Utilities"]
+            
+            if sector in rate_sensitive:
+                analysis["sector_macro_profile"] = f"{sector} is rate-sensitive, watch Fed policy"
+            elif sector in cyclical:
+                analysis["sector_macro_profile"] = f"{sector} is cyclical, tied to economic growth"
+            elif sector in defensive:
+                analysis["sector_macro_profile"] = f"{sector} is defensive, stable in downturns"
+            else:
+                analysis["sector_macro_profile"] = f"{sector} macro sensitivity varies"
         
         return analysis

@@ -2,7 +2,8 @@
 from typing import Dict, Any
 from datetime import date, timedelta
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
+import yfinance as yf
 
 
 class EventsAgent(BaseAgent):
@@ -13,7 +14,7 @@ class EventsAgent(BaseAgent):
             name="Events Agent",
             description="Analyzes earnings reports, news events, sentiment, and external factors affecting stocks"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are an event-driven analyst specializing in how specific events affect stock prices.
@@ -40,53 +41,57 @@ Provide reasoning that connects specific events to expected price movements."""
     
     def collect_signals(self, symbol: str, as_of_date: date) -> Dict[str, Any]:
         """Collect event-related signals."""
-        signals = {}
+        signals = {
+            "symbol": symbol,
+            "date": as_of_date.isoformat()
+        }
         
-        # Get recent events
-        recent_events = self.data_loader.get_recent_events(symbol, as_of_date, days=30)
-        if recent_events:
-            signals["recent_events"] = [
-                {
-                    "type": e.event_type,
-                    "date": e.event_date.isoformat(),
-                    "title": e.title,
-                    "sentiment": e.sentiment_score,
-                    "impact": e.impact_score
-                }
-                for e in recent_events
-            ]
+        # Get company info
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
         
-        # Get upcoming events
-        upcoming_events = self.data_loader.get_upcoming_events(symbol, as_of_date, days=30)
-        if upcoming_events:
-            signals["upcoming_events"] = [
-                {
-                    "type": e.event_type,
-                    "date": e.event_date.isoformat(),
-                    "title": e.title
-                }
-                for e in upcoming_events
-            ]
+        # Get earnings calendar and history from Yahoo Finance
+        try:
+            ticker = yf.Ticker(symbol)
+            
+            # Earnings calendar
+            calendar = ticker.calendar
+            if calendar is not None and not calendar.empty:
+                # Calendar is a DataFrame with earnings dates
+                if 'Earnings Date' in calendar.index:
+                    earnings_dates = calendar.loc['Earnings Date']
+                    if isinstance(earnings_dates, (list, tuple)) and len(earnings_dates) > 0:
+                        signals["next_earnings_date"] = str(earnings_dates[0])
+                    elif hasattr(earnings_dates, 'values'):
+                        signals["next_earnings_date"] = str(earnings_dates.values[0])
+            
+            # Recent earnings history
+            earnings_history = ticker.earnings_dates
+            if earnings_history is not None and not earnings_history.empty:
+                # Get last 4 earnings
+                recent_earnings = earnings_history.head(4)
+                if 'Surprise(%)' in recent_earnings.columns:
+                    surprises = recent_earnings['Surprise(%)'].dropna()
+                    if not surprises.empty:
+                        signals["recent_earnings_surprises"] = surprises.tolist()
+                        signals["avg_earnings_surprise"] = float(surprises.mean())
+            
+            # News (from Yahoo Finance)
+            news = ticker.news
+            if news:
+                signals["recent_news_count"] = len(news)
+                signals["recent_news_titles"] = [n.get('title', '')[:80] for n in news[:5]]
+            
+        except Exception as e:
+            signals["events_data_note"] = f"Limited events data: {str(e)[:100]}"
         
-        # Get earnings data
-        earnings = self.data_loader.get_earnings_data(symbol, as_of_date)
-        if earnings:
-            signals["earnings"] = {
-                "last_earnings_date": earnings.get("last_date"),
-                "last_eps": earnings.get("last_eps"),
-                "expected_eps": earnings.get("expected_eps"),
-                "surprise": earnings.get("surprise"),
-                "next_earnings_date": earnings.get("next_date")
-            }
-        
-        # Get news sentiment
-        news_sentiment = self.data_loader.get_news_sentiment(symbol, as_of_date, days=7)
-        if news_sentiment:
-            signals["news_sentiment"] = {
-                "avg_sentiment": news_sentiment.get("avg_sentiment"),
-                "sentiment_trend": news_sentiment.get("trend"),
-                "article_count": news_sentiment.get("count")
-            }
+        # Get fundamental metrics for earnings quality
+        fundamentals = self.data_loader.load_fundamentals(symbol, as_of_date)
+        if fundamentals:
+            signals["last_reported_eps"] = fundamentals.eps
+            signals["pe_ratio"] = fundamentals.pe_ratio
         
         return signals
     
@@ -94,58 +99,48 @@ Provide reasoning that connects specific events to expected price movements."""
         """Analyze event signals."""
         analysis = {}
         
-        # Earnings analysis
-        if "earnings" in signals:
-            earnings = signals["earnings"]
-            if earnings.get("surprise"):
-                surprise = earnings["surprise"]
-                if surprise > 0.1:
-                    analysis["earnings_performance"] = "strong beat"
-                elif surprise > 0.05:
-                    analysis["earnings_performance"] = "beat"
-                elif surprise < -0.1:
-                    analysis["earnings_performance"] = "significant miss"
-                elif surprise < -0.05:
-                    analysis["earnings_performance"] = "miss"
-                else:
-                    analysis["earnings_performance"] = "in line"
-        
-        # News sentiment analysis
-        if "news_sentiment" in signals:
-            sentiment = signals["news_sentiment"]
-            avg_sentiment = sentiment.get("avg_sentiment", 0)
-            if avg_sentiment > 0.3:
-                analysis["sentiment"] = "very positive"
-            elif avg_sentiment > 0.1:
-                analysis["sentiment"] = "positive"
-            elif avg_sentiment < -0.3:
-                analysis["sentiment"] = "very negative"
-            elif avg_sentiment < -0.1:
-                analysis["sentiment"] = "negative"
+        # Earnings surprise pattern analysis
+        if signals.get("recent_earnings_surprises"):
+            surprises = signals["recent_earnings_surprises"]
+            avg_surprise = signals.get("avg_earnings_surprise", 0)
+            
+            if avg_surprise > 5:
+                analysis["earnings_track_record"] = "consistently beating (avg +5%+)"
+            elif avg_surprise > 0:
+                analysis["earnings_track_record"] = "generally positive surprises"
+            elif avg_surprise < -5:
+                analysis["earnings_track_record"] = "consistently missing (avg -5%+)"
+            elif avg_surprise < 0:
+                analysis["earnings_track_record"] = "generally negative surprises"
             else:
-                analysis["sentiment"] = "neutral"
+                analysis["earnings_track_record"] = "meeting expectations"
+            
+            # Check consistency
+            positive_surprises = sum(1 for s in surprises if s > 0)
+            consistency = (positive_surprises / len(surprises) * 100) if surprises else 50
+            analysis["earnings_consistency"] = f"{consistency:.0f}% positive surprises"
         
-        # Event impact assessment
-        if "recent_events" in signals:
-            events = signals["recent_events"]
-            high_impact_events = [e for e in events if e.get("impact", 0) > 0.7]
-            if high_impact_events:
-                analysis["recent_high_impact_events"] = len(high_impact_events)
-                analysis["event_impact"] = "high"
-            elif events:
-                analysis["recent_high_impact_events"] = 0
-                analysis["event_impact"] = "moderate"
-            else:
-                analysis["event_impact"] = "low"
+        # Earnings timing assessment
+        if signals.get("next_earnings_date"):
+            analysis["upcoming_catalyst"] = f"Earnings on {signals['next_earnings_date']}"
+            analysis["catalyst_proximity"] = "near-term catalyst"
+        else:
+            analysis["catalyst_proximity"] = "no immediate earnings catalyst"
         
-        # Upcoming events
-        if "upcoming_events" in signals:
-            upcoming = signals["upcoming_events"]
-            earnings_events = [e for e in upcoming if e.get("type") == "earnings"]
-            if earnings_events:
-                analysis["upcoming_earnings"] = True
-                analysis["next_earnings_date"] = earnings_events[0].get("date")
+        # News coverage assessment
+        if signals.get("recent_news_count"):
+            news_count = signals["recent_news_count"]
+            if news_count > 10:
+                analysis["media_coverage"] = "high media attention (10+ recent articles)"
+            elif news_count > 5:
+                analysis["media_coverage"] = "moderate media coverage (5-10 articles)"
+            elif news_count > 0:
+                analysis["media_coverage"] = "low media coverage (1-5 articles)"
             else:
-                analysis["upcoming_earnings"] = False
+                analysis["media_coverage"] = "minimal media attention"
+        
+        # Recent news headlines (for context)
+        if signals.get("recent_news_titles"):
+            analysis["recent_headlines"] = signals["recent_news_titles"][:3]  # Top 3
         
         return analysis
