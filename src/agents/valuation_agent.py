@@ -2,7 +2,7 @@
 from typing import Dict, Any
 from datetime import date
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
 
 
 class ValuationAgent(BaseAgent):
@@ -13,7 +13,7 @@ class ValuationAgent(BaseAgent):
             name="Valuation Agent",
             description="Analyzes stock valuation metrics, fair value estimates, and market perception"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are a valuation analyst specializing in determining fair value of stocks.
@@ -40,9 +40,11 @@ Provide clear reasoning based on valuation principles and whether the stock is o
         signals = {}
         
         # Get valuation metrics
-        valuation = self.data_loader.get_valuation(symbol, as_of_date)
+        valuation = self.data_loader.load_valuation(symbol, as_of_date)
         if valuation:
             signals.update({
+                "symbol": symbol,
+                "date": as_of_date.isoformat(),
                 "market_cap": valuation.market_cap,
                 "enterprise_value": valuation.enterprise_value,
                 "pe_ratio": valuation.pe_ratio,
@@ -52,27 +54,16 @@ Provide clear reasoning based on valuation principles and whether the stock is o
                 "fair_value_estimate": valuation.fair_value_estimate
             })
         
-        # Get current price
-        current_price = self.data_loader.get_current_price(symbol)
-        if current_price:
-            signals["current_price"] = current_price
+        # Get current price from technical data
+        technical = self.data_loader.load_technical(symbol, as_of_date)
+        if technical and technical.close_price:
+            signals["current_price"] = technical.close_price
         
-        # Get historical valuation ranges
-        historical_valuation = self.data_loader.get_valuation_history(symbol, as_of_date, periods=12)
-        if historical_valuation:
-            pe_ratios = [v.pe_ratio for v in historical_valuation if v.pe_ratio]
-            if pe_ratios:
-                signals["historical_pe_range"] = {
-                    "min": min(pe_ratios),
-                    "max": max(pe_ratios),
-                    "avg": sum(pe_ratios) / len(pe_ratios),
-                    "current": valuation.pe_ratio if valuation and valuation.pe_ratio else None
-                }
-        
-        # Get peer valuations
-        peer_valuations = self.data_loader.get_peer_valuations(symbol)
-        if peer_valuations:
-            signals["peer_valuations"] = peer_valuations
+        # Get company info
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
         
         return signals
     
@@ -86,44 +77,49 @@ Provide clear reasoning based on valuation principles and whether the stock is o
             fair_value = signals["fair_value_estimate"]
             discount_premium = ((current / fair_value) - 1) * 100
             
-            if discount_premium < -10:
-                analysis["value_assessment"] = "significantly undervalued"
+            if discount_premium < -15:
+                analysis["value_assessment"] = "significantly undervalued (-15%+)"
             elif discount_premium < -5:
-                analysis["value_assessment"] = "undervalued"
-            elif discount_premium > 10:
-                analysis["value_assessment"] = "significantly overvalued"
+                analysis["value_assessment"] = "undervalued (-5% to -15%)"
+            elif discount_premium > 15:
+                analysis["value_assessment"] = "significantly overvalued (+15%+)"
             elif discount_premium > 5:
-                analysis["value_assessment"] = "overvalued"
+                analysis["value_assessment"] = "overvalued (+5% to +15%)"
             else:
-                analysis["value_assessment"] = "fairly valued"
+                analysis["value_assessment"] = "fairly valued (±5%)"
             
-            analysis["discount_premium_pct"] = discount_premium
+            analysis["discount_premium_pct"] = round(discount_premium, 2)
         
         # P/E ratio analysis
-        if "historical_pe_range" in signals:
-            pe_range = signals["historical_pe_range"]
-            current_pe = pe_range.get("current")
-            avg_pe = pe_range.get("avg")
-            
-            if current_pe and avg_pe:
-                pe_vs_avg = ((current_pe / avg_pe) - 1) * 100
-                if pe_vs_avg < -20:
-                    analysis["pe_assessment"] = "well below historical average"
-                elif pe_vs_avg > 20:
-                    analysis["pe_assessment"] = "well above historical average"
-                else:
-                    analysis["pe_assessment"] = "near historical average"
+        if signals.get("pe_ratio"):
+            pe = signals["pe_ratio"]
+            if pe < 10:
+                analysis["pe_assessment"] = "very low P/E (<10), potential value"
+            elif pe < 20:
+                analysis["pe_assessment"] = "moderate P/E (10-20), reasonable valuation"
+            elif pe < 30:
+                analysis["pe_assessment"] = "elevated P/E (20-30), growth expected"
+            else:
+                analysis["pe_assessment"] = "high P/E (>30), premium valuation"
         
-        # Peer comparison
-        if "peer_valuations" in signals:
-            peer_pe = signals["peer_valuations"].get("avg_pe_ratio")
-            current_pe = signals.get("pe_ratio")
-            if peer_pe and current_pe:
-                if current_pe < peer_pe * 0.9:
-                    analysis["peer_comparison"] = "trading at discount to peers"
-                elif current_pe > peer_pe * 1.1:
-                    analysis["peer_comparison"] = "trading at premium to peers"
-                else:
-                    analysis["peer_comparison"] = "in line with peers"
+        # P/B ratio analysis
+        if signals.get("pb_ratio"):
+            pb = signals["pb_ratio"]
+            if pb < 1.0:
+                analysis["pb_assessment"] = "below book value (P/B <1.0)"
+            elif pb < 3.0:
+                analysis["pb_assessment"] = "moderate P/B (1.0-3.0)"
+            else:
+                analysis["pb_assessment"] = "high P/B (>3.0), growth premium"
+        
+        # EV/EBITDA analysis
+        if signals.get("ev_ebitda"):
+            ev_ebitda = signals["ev_ebitda"]
+            if ev_ebitda < 10:
+                analysis["ev_ebitda_assessment"] = "attractive EV/EBITDA (<10)"
+            elif ev_ebitda < 15:
+                analysis["ev_ebitda_assessment"] = "fair EV/EBITDA (10-15)"
+            else:
+                analysis["ev_ebitda_assessment"] = "expensive EV/EBITDA (>15)"
         
         return analysis

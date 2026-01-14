@@ -2,7 +2,7 @@
 from typing import Dict, Any
 from datetime import date
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
 
 
 class FundamentalsAgent(BaseAgent):
@@ -13,7 +13,7 @@ class FundamentalsAgent(BaseAgent):
             name="Fundamentals Agent",
             description="Analyzes company financial metrics, ratios, growth indicators, and fundamental health"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are a financial analyst specializing in fundamental analysis of companies.
@@ -40,10 +40,12 @@ Provide clear, data-driven reasoning for your predictions based on fundamental a
         signals = {}
         
         # Get fundamental metrics from data loader
-        fundamentals = self.data_loader.get_fundamentals(symbol, as_of_date)
+        fundamentals = self.data_loader.load_fundamentals(symbol, as_of_date)
         
         if fundamentals:
             signals.update({
+                "symbol": symbol,
+                "date": as_of_date.isoformat(),
                 "revenue": fundamentals.revenue,
                 "net_income": fundamentals.net_income,
                 "eps": fundamentals.eps,
@@ -53,19 +55,12 @@ Provide clear, data-driven reasoning for your predictions based on fundamental a
                 "revenue_growth": fundamentals.revenue_growth
             })
         
-        # Get historical trends (last 4 quarters)
-        historical = self.data_loader.get_fundamentals_history(symbol, as_of_date, quarters=4)
-        if historical:
-            signals["historical_trends"] = {
-                "revenue_trend": [f.revenue for f in historical if f.revenue],
-                "eps_trend": [f.eps for f in historical if f.eps],
-                "roe_trend": [f.roe for f in historical if f.roe]
-            }
-        
-        # Get industry comparison
-        industry_avg = self.data_loader.get_industry_averages(symbol)
-        if industry_avg:
-            signals["industry_comparison"] = industry_avg
+        # Get company info for context
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
+            signals["industry"] = company.industry
         
         return signals
     
@@ -73,43 +68,58 @@ Provide clear, data-driven reasoning for your predictions based on fundamental a
         """Analyze fundamental signals."""
         analysis = {}
         
-        # Calculate growth trends
-        if "historical_trends" in signals:
-            revenue_trend = signals["historical_trends"].get("revenue_trend", [])
-            if len(revenue_trend) >= 2:
-                analysis["revenue_momentum"] = "increasing" if revenue_trend[-1] > revenue_trend[0] else "decreasing"
-                analysis["revenue_growth_rate"] = ((revenue_trend[-1] / revenue_trend[0]) - 1) * 100 if revenue_trend[0] > 0 else 0
+        # Revenue growth assessment
+        if signals.get("revenue_growth"):
+            growth = signals["revenue_growth"]
+            if growth > 20:
+                analysis["revenue_assessment"] = "strong growth (>20%)"
+            elif growth > 10:
+                analysis["revenue_assessment"] = "healthy growth (10-20%)"
+            elif growth > 0:
+                analysis["revenue_assessment"] = "modest growth (0-10%)"
+            else:
+                analysis["revenue_assessment"] = "declining revenue"
         
-        # Assess financial health
+        # Assess financial health (debt-to-equity)
         if signals.get("debt_to_equity"):
             de_ratio = signals["debt_to_equity"]
             if de_ratio < 0.5:
-                analysis["financial_health"] = "strong"
+                analysis["financial_health"] = "strong (low debt)"
             elif de_ratio < 1.0:
-                analysis["financial_health"] = "moderate"
+                analysis["financial_health"] = "moderate debt levels"
             else:
-                analysis["financial_health"] = "leveraged"
+                analysis["financial_health"] = "highly leveraged"
         
-        # Profitability assessment
+        # Profitability assessment (ROE)
         if signals.get("roe"):
-            roe = signals["roe"]
+            roe = signals["roe"] * 100  # Convert to percentage
             if roe > 15:
-                analysis["profitability"] = "excellent"
+                analysis["profitability"] = "excellent (ROE >15%)"
             elif roe > 10:
-                analysis["profitability"] = "good"
+                analysis["profitability"] = "good (ROE 10-15%)"
+            elif roe > 5:
+                analysis["profitability"] = "moderate (ROE 5-10%)"
             else:
-                analysis["profitability"] = "moderate"
+                analysis["profitability"] = "weak (ROE <5%)"
         
-        # Valuation assessment
+        # Valuation assessment (P/E ratio)
         if signals.get("pe_ratio"):
             pe = signals["pe_ratio"]
-            industry_pe = signals.get("industry_comparison", {}).get("avg_pe_ratio")
-            if industry_pe:
-                if pe < industry_pe * 0.8:
-                    analysis["valuation"] = "undervalued"
-                elif pe > industry_pe * 1.2:
-                    analysis["valuation"] = "overvalued"
-                else:
-                    analysis["valuation"] = "fair"
+            if pe < 15:
+                analysis["valuation"] = "attractive (P/E <15)"
+            elif pe < 25:
+                analysis["valuation"] = "fair (P/E 15-25)"
+            else:
+                analysis["valuation"] = "expensive (P/E >25)"
+        
+        # Earnings quality (EPS)
+        if signals.get("eps"):
+            eps = signals["eps"]
+            if eps > 5:
+                analysis["earnings_quality"] = "strong earnings per share"
+            elif eps > 0:
+                analysis["earnings_quality"] = "positive earnings"
+            else:
+                analysis["earnings_quality"] = "negative earnings"
         
         return analysis
