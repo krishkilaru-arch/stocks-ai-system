@@ -1,25 +1,62 @@
-# Databricks configuration
-# Update with your workspace details
+# Databricks Asset Bundle Configuration
+# This bundle manages the stocks-ai-system deployment
 
-workspace:
-  host: https://your-workspace.cloud.databricks.com
-  profile: DEFAULT
+bundle:
+  name: stocks-ai-system
 
-catalog:
-  name: stocks_ai
-  comment: "Multi-supervisor AI system for stock prediction"
+targets:
+  default:
+    workspace:
+      host: https://dbc-47a3dcaa-ae3e.cloud.databricks.com
+      profile: DEFAULT
+      # root_path will be set automatically based on bundle deployment
 
-schema:
-  name: fortune100
-  comment: "Fortune 100 companies data and predictions"
+variables:
+  catalog_name:
+    description: "Unity Catalog name"
+    default: "stocks_ai"
+  
+  experiment_path:
+    description: "MLflow experiment path"
+    default: "/Shared/stocks_ai/experiments"
 
-# MLflow experiment
-mlflow:
-  experiment_name: "/Shared/stocks_ai/experiments"
-  tracking_uri: "databricks"
+resources:
+  jobs:
+    daily_data_ingestion:
+      name: daily-stock-data-ingestion
+      tasks:
+        - task_key: ingest_companies
+          notebook_task:
+            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/00_initial_setup
+            base_parameters:
+              catalog: ${var.catalog_name}
+          new_cluster:
+            spark_version: 13.3.x-scala2.12
+            node_type_id: i3.xlarge
+            num_workers: 2
+            autotermination_minutes: 30
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "UTC"
+      max_concurrent_runs: 1
+      
+    phase2_setup:
+      name: phase2-setup-test
+      tasks:
+        - task_key: test_phase2
+          notebook_task:
+            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/01_phase2_setup
+          new_cluster:
+            spark_version: 13.3.x-scala2.12
+            node_type_id: i3.xlarge
+            num_workers: 2
+            autotermination_minutes: 30
 
-# Unity Catalog paths
-paths:
-  raw_data: "s3://your-bucket/stocks/raw"
-  processed_data: "s3://your-bucket/stocks/processed"
-  predictions: "s3://your-bucket/stocks/predictions"
+  # Note: Unity Catalog resources (catalogs, schemas, tables) are created via SQL
+  # Run setup/init.sql in SQL Editor to create:
+  # - Catalog: stocks_ai
+  # - Schemas: fortune100, signals, agents, meta
+  # - All Delta tables

@@ -1,0 +1,20 @@
+# Databricks CLI Configuration
+# Copy this file to ~/.databrickscfg and update with your credentials
+# 
+# To create your personal access token:
+# 1. Go to User Settings in Databricks
+# 2. Access Tokens → Generate New Token
+# 3. Copy the token and paste it below
+
+[DEFAULT]
+host = https://dbc-47a3dcaa-ae3e.cloud.databricks.com
+token = your-personal-access-token-here
+
+# Optional: Add additional profiles for different workspaces
+# [PRODUCTION]
+# host = https://your-production-workspace.cloud.databricks.com
+# token = your-production-token-here
+
+# [STAGING]
+# host = https://your-staging-workspace.cloud.databricks.com
+# token = your-staging-token-here
