@@ -35,7 +35,7 @@ class Config(BaseSettings):
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     llm_provider: str = "databricks"  # databricks, openai, or anthropic
-    llm_model: str = "databricks-meta-llama-3-1-70b-instruct"
+    llm_model: str = "databricks-meta-llama-3-1-8b-instruct"  # Use 8B model (always available)
     
     # Data Sources
     yahoo_finance_enabled: bool = True
