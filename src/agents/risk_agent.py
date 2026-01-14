@@ -1,9 +1,10 @@
 """Risk Management Agent - Analyzes portfolio risk, VaR, correlations, and regulatory compliance."""
 from typing import Dict, Any, List
-from datetime import date
+from datetime import date, timedelta
 from src.agents.base_agent import BaseAgent
-from src.data.loaders import DataLoader
+from src.data.loaders import YahooFinanceLoader
 import numpy as np
+import yfinance as yf
 
 
 class RiskAgent(BaseAgent):
@@ -14,7 +15,7 @@ class RiskAgent(BaseAgent):
             name="Risk Management Agent",
             description="Analyzes portfolio risk, VaR, correlations, concentration risk, and regulatory compliance"
         )
-        self.data_loader = DataLoader()
+        self.data_loader = YahooFinanceLoader()
     
     def get_system_prompt(self) -> str:
         return """You are a risk management specialist focusing on portfolio risk analysis.
@@ -40,46 +41,78 @@ Provide clear risk assessment with both quantitative metrics and qualitative ris
     
     def collect_signals(self, symbol: str, as_of_date: date) -> Dict[str, Any]:
         """Collect risk-related signals."""
-        signals = {}
+        signals = {
+            "symbol": symbol,
+            "date": as_of_date.isoformat()
+        }
         
-        # Get price history for volatility calculation
-        price_history = self.data_loader.get_price_history(symbol, as_of_date, days=252)  # 1 year
-        if price_history and len(price_history) > 0:
-            prices = [p.close_price for p in price_history]
-            returns = np.diff(prices) / prices[:-1]
+        # Get company info
+        company = self.data_loader.load_company_info(symbol)
+        if company:
+            signals["company_name"] = company.company_name
+            signals["sector"] = company.sector
+            signals["industry"] = company.industry
+        
+        # Get price history for volatility and VaR calculation (1 year)
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1y")
             
-            signals["volatility"] = float(np.std(returns) * np.sqrt(252))  # Annualized
-            signals["returns"] = returns.tolist()
-            signals["price_history"] = prices
+            if not hist.empty and len(hist) > 20:
+                prices = hist['Close'].values
+                returns = np.diff(prices) / prices[:-1]
+                
+                # Volatility (annualized)
+                daily_vol = np.std(returns)
+                annual_vol = daily_vol * np.sqrt(252)
+                signals["volatility"] = float(annual_vol)
+                signals["daily_volatility"] = float(daily_vol)
+                
+                # Returns for VaR calculation
+                signals["returns"] = returns.tolist()
+                signals["current_price"] = float(prices[-1])
+                
+                # Downside deviation (for Sortino ratio)
+                negative_returns = returns[returns < 0]
+                if len(negative_returns) > 0:
+                    downside_deviation = np.std(negative_returns) * np.sqrt(252)
+                    signals["downside_deviation"] = float(downside_deviation)
+                
+                # Maximum drawdown
+                cumulative = np.cumprod(1 + returns)
+                running_max = np.maximum.accumulate(cumulative)
+                drawdown = (cumulative - running_max) / running_max
+                signals["max_drawdown"] = float(np.min(drawdown))
+                
+        except Exception as e:
+            signals["price_data_note"] = f"Limited price history: {str(e)[:100]}"
         
-        # Get current price
-        current_price = self.data_loader.get_current_price(symbol)
-        if current_price:
-            signals["current_price"] = current_price
-        
-        # Get company info for sector/industry
-        company_info = self.data_loader.get_company_info(symbol)
-        if company_info:
-            signals["sector"] = company_info.sector
-            signals["industry"] = company_info.industry
-        
-        # Get market data (S&P 500 for correlation)
-        market_data = self.data_loader.get_price_history("SPY", as_of_date, days=252)
-        if market_data and len(market_data) > 0 and "returns" in signals:
-            market_prices = [p.close_price for p in market_data]
-            market_returns = np.diff(market_prices) / market_prices[:-1]
+        # Get market data (S&P 500) for beta and correlation
+        try:
+            spy = yf.Ticker("SPY")
+            spy_hist = spy.history(period="1y")
             
-            # Calculate correlation
-            if len(returns) == len(market_returns):
-                correlation = np.corrcoef(returns, market_returns)[0, 1]
+            if not spy_hist.empty and len(spy_hist) > 20 and "returns" in signals:
+                spy_prices = spy_hist['Close'].values
+                spy_returns = np.diff(spy_prices) / spy_prices[:-1]
+                
+                # Align lengths
+                min_len = min(len(returns), len(spy_returns))
+                stock_returns = returns[-min_len:]
+                market_returns = spy_returns[-min_len:]
+                
+                # Calculate correlation
+                correlation = np.corrcoef(stock_returns, market_returns)[0, 1]
                 signals["market_correlation"] = float(correlation)
-                signals["beta"] = float(correlation * signals["volatility"] / np.std(market_returns) / np.sqrt(252))
-        
-        # Get sector peers for concentration analysis
-        if company_info:
-            peers = self.data_loader.get_peer_companies(symbol)
-            if peers:
-                signals["peer_count"] = len(peers)
+                
+                # Calculate beta
+                market_variance = np.var(market_returns)
+                covariance = np.cov(stock_returns, market_returns)[0, 1]
+                beta = covariance / market_variance if market_variance > 0 else 1.0
+                signals["beta"] = float(beta)
+                
+        except Exception as e:
+            signals["market_data_note"] = f"Limited market data: {str(e)[:100]}"
         
         return signals
     
@@ -90,58 +123,103 @@ Provide clear risk assessment with both quantitative metrics and qualitative ris
         # Volatility assessment
         if signals.get("volatility"):
             vol = signals["volatility"]
-            if vol > 0.4:
-                analysis["volatility_level"] = "very high"
-            elif vol > 0.3:
-                analysis["volatility_level"] = "high"
-            elif vol > 0.2:
-                analysis["volatility_level"] = "moderate"
+            if vol > 0.5:
+                analysis["volatility_level"] = f"very high ({vol:.1%} annualized)"
+                analysis["volatility_risk"] = "extreme price swings expected"
+            elif vol > 0.35:
+                analysis["volatility_level"] = f"high ({vol:.1%} annualized)"
+                analysis["volatility_risk"] = "significant price fluctuations likely"
+            elif vol > 0.20:
+                analysis["volatility_level"] = f"moderate ({vol:.1%} annualized)"
+                analysis["volatility_risk"] = "normal market volatility"
             else:
-                analysis["volatility_level"] = "low"
+                analysis["volatility_level"] = f"low ({vol:.1%} annualized)"
+                analysis["volatility_risk"] = "stable, lower risk"
         
         # VaR calculation (95% confidence, 1-day)
         if signals.get("returns") and len(signals["returns"]) > 0:
             returns = np.array(signals["returns"])
-            var_95 = np.percentile(returns, 5)
-            analysis["var_95_1day"] = float(var_95)
+            var_95 = np.percentile(returns, 5)  # 5th percentile
+            var_99 = np.percentile(returns, 1)  # 1st percentile (tail risk)
             
-            # Convert to dollar terms if we have current price
-            if signals.get("current_price"):
-                analysis["var_95_1day_usd"] = float(var_95 * signals["current_price"])
+            analysis["var_95_1day_pct"] = f"{var_95:.2%}"
+            analysis["var_99_1day_pct"] = f"{var_99:.2%}"
+            analysis["var_interpretation"] = f"95% confidence: daily loss won't exceed {abs(var_95):.1%}"
+            
+            # Expected shortfall (CVaR) - average loss beyond VaR
+            tail_losses = returns[returns <= var_95]
+            if len(tail_losses) > 0:
+                cvar_95 = np.mean(tail_losses)
+                analysis["cvar_95"] = f"{cvar_95:.2%}"
+                analysis["tail_risk"] = f"If VaR breached, expected loss: {abs(cvar_95):.1%}"
         
-        # Beta assessment
+        # Maximum drawdown assessment
+        if signals.get("max_drawdown"):
+            max_dd = signals["max_drawdown"]
+            analysis["max_drawdown"] = f"{max_dd:.1%}"
+            if max_dd < -0.5:
+                analysis["drawdown_risk"] = "severe historical drawdowns (>50%)"
+            elif max_dd < -0.3:
+                analysis["drawdown_risk"] = "significant historical drawdowns (30-50%)"
+            elif max_dd < -0.15:
+                analysis["drawdown_risk"] = "moderate historical drawdowns (15-30%)"
+            else:
+                analysis["drawdown_risk"] = "limited historical drawdowns (<15%)"
+        
+        # Beta assessment (market sensitivity)
         if signals.get("beta"):
             beta = signals["beta"]
-            if beta > 1.2:
-                analysis["market_sensitivity"] = "high (aggressive)"
+            analysis["beta"] = f"{beta:.2f}"
+            if beta > 1.5:
+                analysis["market_sensitivity"] = "very high (1.5x+ market moves)"
+                analysis["market_risk"] = "amplifies market volatility significantly"
+            elif beta > 1.2:
+                analysis["market_sensitivity"] = "high (1.2-1.5x market moves)"
+                analysis["market_risk"] = "more volatile than market"
             elif beta > 0.8:
-                analysis["market_sensitivity"] = "moderate"
+                analysis["market_sensitivity"] = "moderate (0.8-1.2x market moves)"
+                analysis["market_risk"] = "tracks market closely"
             elif beta > 0:
-                analysis["market_sensitivity"] = "low (defensive)"
+                analysis["market_sensitivity"] = "low (<0.8x market moves)"
+                analysis["market_risk"] = "defensive, less volatile than market"
             else:
-                analysis["market_sensitivity"] = "negative (hedge)"
+                analysis["market_sensitivity"] = "negative beta (hedge)"
+                analysis["market_risk"] = "moves opposite to market"
         
-        # Correlation assessment
+        # Correlation assessment (diversification benefit)
         if signals.get("market_correlation"):
             corr = signals["market_correlation"]
-            if corr > 0.7:
-                analysis["diversification_benefit"] = "low (highly correlated)"
-            elif corr > 0.3:
+            analysis["market_correlation"] = f"{corr:.2f}"
+            if corr > 0.8:
+                analysis["diversification_benefit"] = "very low (highly correlated)"
+            elif corr > 0.5:
+                analysis["diversification_benefit"] = "low (correlated)"
+            elif corr > 0.2:
                 analysis["diversification_benefit"] = "moderate"
+            elif corr > -0.2:
+                analysis["diversification_benefit"] = "high (uncorrelated)"
             else:
-                analysis["diversification_benefit"] = "high (low correlation)"
+                analysis["diversification_benefit"] = "very high (negative correlation, hedge)"
         
-        # Concentration risk
-        if signals.get("sector"):
-            # Simplified - would need portfolio context
-            analysis["concentration_risk"] = "requires portfolio context"
+        # Downside risk (for Sortino ratio)
+        if signals.get("downside_deviation"):
+            dd = signals["downside_deviation"]
+            analysis["downside_deviation"] = f"{dd:.1%}"
+            analysis["downside_focus"] = "measures only negative return volatility"
         
-        # Regulatory risk indicators
-        analysis["regulatory_considerations"] = [
-            "Basel III capital requirements",
-            "Stress testing compliance",
-            "Model governance requirements"
-        ]
+        # Risk summary
+        risk_factors = []
+        if signals.get("volatility", 0) > 0.35:
+            risk_factors.append("High volatility")
+        if signals.get("beta", 1.0) > 1.3:
+            risk_factors.append("High market sensitivity")
+        if signals.get("max_drawdown", 0) < -0.3:
+            risk_factors.append("Severe historical drawdowns")
+        
+        if risk_factors:
+            analysis["key_risk_factors"] = risk_factors
+        else:
+            analysis["key_risk_factors"] = ["Moderate risk profile"]
         
         return analysis
     
