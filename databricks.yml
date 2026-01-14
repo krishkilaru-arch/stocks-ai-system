@@ -43,12 +43,12 @@ resources:
         timezone_id: "UTC"
       max_concurrent_runs: 1
       
-    core_framework_test:
-      name: core-framework-test
+    framework_setup:
+      name: framework-setup
       tasks:
-        - task_key: test_framework
+        - task_key: setup_framework
           notebook_task:
-            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/01_core_framework_test
+            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/01_framework_setup
           new_cluster:
             spark_version: 13.3.x-scala2.12
             node_type_id: i3.xlarge
