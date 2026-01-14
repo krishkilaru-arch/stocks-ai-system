@@ -9,28 +9,28 @@ from src.agents.macro_agent import MacroAgent
 from src.agents.events_agent import EventsAgent
 from src.agents.technical_agent import TechnicalAgent
 from src.agents.sector_agent import SectorAgent
-from src.agents.risk_agent import RiskAgent
-from src.agents.esg_agent import ESGAgent
 from src.data.schemas import SynthesizedPrediction, AgentPrediction
 from src.utils.llm_client import LLMClient
 from src.utils.config import config
 
 
 class MetaSupervisor:
-    """Meta-supervisor that orchestrates all agents and synthesizes predictions."""
+    """Meta-supervisor that orchestrates all 6 specialized agents and synthesizes predictions."""
     
     def __init__(self):
+        """Initialize Meta-Supervisor with 6 specialized agents."""
+        # 3 Core Agents: Fundamentals, Valuation, Technical
+        # 3 Context Agents: Macro, Events, Sector
         self.agents = {
             "fundamentals": FundamentalsAgent(),
             "valuation": ValuationAgent(),
+            "technical": TechnicalAgent(),
             "macro": MacroAgent(),
             "events": EventsAgent(),
-            "technical": TechnicalAgent(),
-            "sector": SectorAgent(),
-            "risk": RiskAgent(),
-            "esg": ESGAgent()
+            "sector": SectorAgent()
         }
         self.llm_client = LLMClient()
+        print(f"✓ Meta-Supervisor initialized with {len(self.agents)} agents")
     
     def generate_prediction(
         self,
@@ -194,12 +194,53 @@ Please provide:
 
 Format your response clearly with sections for each component."""
         
-        return self.llm_client.generate_reasoning(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.7,
-            max_tokens=3000
-        )
+        try:
+            return self.llm_client.generate_reasoning(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.7,
+                max_tokens=3000
+            )
+        except Exception as e:
+            # Fallback if LLM fails
+            print(f"⚠ LLM hypothesis generation failed: {e}")
+            return self._generate_fallback_hypothesis(
+                symbol, weighted_return, avg_confidence, agent_predictions
+            )
+    
+    def _generate_fallback_hypothesis(
+        self,
+        symbol: str,
+        weighted_return: float,
+        avg_confidence: float,
+        agent_predictions: Dict[str, AgentPrediction]
+    ) -> str:
+        """Generate a simple rule-based hypothesis when LLM is unavailable."""
+        direction = "bullish" if weighted_return > 0 else "bearish"
+        strength = "strong" if abs(weighted_return) > 5 else "moderate"
+        
+        # Extract key factors from agents
+        all_factors = []
+        for pred in agent_predictions.values():
+            all_factors.extend(pred.key_factors[:2])
+        
+        hypothesis = f"""INVESTMENT HYPOTHESIS FOR {symbol}:
+
+Predicted Return: {weighted_return:+.2f}%
+Confidence Score: {avg_confidence:.2f}
+Outlook: {strength.capitalize()} {direction}
+
+Based on analysis from {len(agent_predictions)} specialized agents, the consensus indicates a {direction} outlook for {symbol}. 
+The weighted prediction of {weighted_return:+.2f}% reflects the synthesized view across fundamental, valuation, technical, macroeconomic, event-driven, and sector-specific factors.
+
+Key Supporting Factors:
+{chr(10).join(f"• {factor}" for factor in all_factors[:5])}
+
+Confidence Level: {avg_confidence:.2%} based on agreement across {len(agent_predictions)} agents.
+
+Note: This is a rule-based synthesis. For enhanced reasoning, configure LLM provider."""
+        
+        return hypothesis
     
     def _extract_hypothesis_data(self, hypothesis_text: str) -> Dict[str, Any]:
         """Extract structured data from hypothesis text."""
