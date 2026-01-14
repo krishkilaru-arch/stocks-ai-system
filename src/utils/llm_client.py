@@ -40,14 +40,14 @@ class LLMClient:
             if not workspace_token:
                 raise ValueError("DATABRICKS_TOKEN not set and could not retrieve from context")
             
-            # Foundation Model API endpoint
+            # Foundation Model API endpoint - correct path format
+            # Remove trailing slash from host if present
+            workspace_host = workspace_host.rstrip('/')
+            
             self.client = OpenAI(
                 api_key=workspace_token,
                 base_url=f"{workspace_host}/serving-endpoints"
             )
-            
-            # For Foundation Models, the model name IS the endpoint name
-            # e.g., "databricks-meta-llama-3-1-70b-instruct" is the serving endpoint
         elif self.provider == "openai":
             try:
                 from openai import OpenAI
