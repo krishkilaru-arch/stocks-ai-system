@@ -27,7 +27,7 @@ resources:
       tasks:
         - task_key: ingest_companies
           notebook_task:
-            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/00_initial_setup
+            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/02_data_ingestion
             base_parameters:
               catalog: ${var.catalog_name}
           new_cluster:
@@ -43,12 +43,12 @@ resources:
         timezone_id: "UTC"
       max_concurrent_runs: 1
       
-    phase2_setup:
-      name: phase2-setup-test
+    core_framework_test:
+      name: core-framework-test
       tasks:
-        - task_key: test_phase2
+        - task_key: test_framework
           notebook_task:
-            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/01_phase2_setup
+            notebook_path: /Repos/krish.kilaru@lumenalta.com/stocks-ai-system/notebooks/01_core_framework_test
           new_cluster:
             spark_version: 13.3.x-scala2.12
             node_type_id: i3.xlarge
